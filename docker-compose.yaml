@@ -1,0 +1,39 @@
+
+services:
+  backend1:
+    
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8001:9001"
+    environment:
+      - PORT=9001 
+
+  backend2:
+
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8002:9002"
+    environment:
+      - PORT=9002
+
+  backend3:
+
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8003:9003"
+    environment:
+      - PORT=9003
+
+  proxy:
+
+    build:
+      context: ./loadbalancer
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8888"
