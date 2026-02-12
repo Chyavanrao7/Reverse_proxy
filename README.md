@@ -1,66 +1,100 @@
-# Reverse_proxy
+# Java Reverse Proxy / Load Balancer
 
-A small Java-based reverse proxy / load balancer with simple HTTP backend servers.  
-This repo demonstrates a basic round-robin load balancer that forwards TCP/HTTP connections to multiple Java backend servers.
+A simple TCP reverse proxy and load balancer written in Java. The proxy accepts client connections on a single port and distributes traffic across multiple backend HTTP servers using **round-robin** scheduling.
 
-## Project structure
-- backend/
-  - server.java (class: `HttpBackendServer`) — simple HTTP server that prints request lines and returns a basic HTML response.
-  - Dockerfile — builds a minimal Java container image that runs the backend server (uses OpenJDK 17).
-- loadbalancer/
-  - lb.java (class: `loadbalancer`) — TCP-based load balancer that listens for client connections and forwards data to backends using round-robin.
-- LICENSE — MIT License.
+## Architecture
 
-## Tools & tech
-- Java 17 (OpenJDK)
-- Sockets (java.net.Socket / ServerSocket)
-- Simple multithreading (Threads / ExecutorService)
-- Docker (optional — backend Dockerfile is provided)
+```
+                    ┌─────────────────┐
+                    │   Load Balancer │
+                    │   (port 8888)   │
+                    └────────┬────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         │                   │                   │
+         ▼                   ▼                   ▼
+   ┌───────────┐      ┌───────────┐      ┌───────────┐
+   │ Backend 1 │      │ Backend 2 │      │ Backend 3 │
+   │  (9001)   │      │  (9002)   │      │  (9003)   │
+   └───────────┘      └───────────┘      └───────────┘
+```
 
-## How it works (high level)
-- The load balancer listens on port 8888 for incoming client connections.
-- It maintains a list of backend servers (e.g. backend1:9001, backend2:9002, backend3:9003).
-- For each incoming client, it selects the next backend in round-robin order and opens a TCP connection to that backend.
-- Data is forwarded bidirectionally between client and backend (two threads per connection).
-- Backend servers are simple HTTP responders that return an HTML page containing their port number.
+- **Load balancer**: Listens for TCP connections and forwards each new connection to the next backend in round-robin order. Data is bidirectionally streamed between client and backend.
+- **Backend servers**: Simple HTTP servers that respond with a greeting including their port number (useful for verifying which backend handled the request).
 
-## Run locally (no Docker)
-1. Start multiple backends (each on a different port):
-   - Compile:
-     - javac backend/server.java
-   - Run three backends in separate terminals:
-     - java HttpBackendServer 9001
-     - java HttpBackendServer 9002
-     - java HttpBackendServer 9003
-2. Start the load balancer:
-   - Compile:
-     - javac loadbalancer/lb.java
-   - Run:
-     - java loadbalancer
-   - The load balancer listens on port `8888`.
-3. Test:
-   - curl http://localhost:8888/
-   - Repeat requests and you should see responses coming from different backend ports (round-robin).
+## Prerequisites
 
-## Run with Docker (recommended for hostname resolution)
-1. Create a docker network:
-   - docker network create reverse_net
-2. Build backend image:
-   - docker build -t http-backend:latest backend
-3. Run backend containers on the network:
-   - docker run -d --name backend1 --network reverse_net -e PORT=9001 -p 9001:9001 http-backend:latest
-   - docker run -d --name backend2 --network reverse_net -e PORT=9002 -p 9002:9002 http-backend:latest
-   - docker run -d --name backend3 --network reverse_net -e PORT=9003 -p 9003:9003 http-backend:latest
-4. Options for load balancer:
-   - Run the load balancer on the same Docker network (recommended so container hostnames like `backend1` resolve):
-     - Create a small image or run an ephemeral container with compiled lb class and attach it to `reverse_net` and expose port 8888.
-   - Or run `loadbalancer` binary on a host and ensure it can resolve container hostnames (e.g., run with Docker host network or adjust /etc/hosts).
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 
-## Notes & tips
-- The load balancer uses a simple round-robin counter and does not check backend health; if a backend is down the connection will fail. Consider adding health checks and retry logic for production use.
-- Backends return simple HTML for demonstration. Replace with real application logic as needed.
-- If running load balancer and backends in different networks, update the backend hostnames/addresses in `loadbalancer/lb.java`.
-- The backend Dockerfile runs `java HttpBackendServer $PORT` — ensure the compiled class or source filename matches that command if you change filenames.
+## Quick Start
+
+From the project root:
+
+```bash
+docker compose up --build
+```
+
+- **Proxy** is exposed on **http://localhost:8080** (mapped to internal port 8888).
+- **Backends** run on ports 9001, 9002, and 9003 (internal to the Docker network).
+
+### Test the load balancer
+
+```bash
+# Send multiple requests; you should see responses from different backends (round-robin)
+curl http://localhost:8080/
+curl http://localhost:8080/
+curl http://localhost:8080/
+```
+
+Each response will show which backend port handled the request (e.g. "Hello from Backend Server on port 9001").
+
+## Project Structure
+
+```
+java-reverse-proxy/
+├── loadbalancer/
+│   ├── Dockerfile
+│   └── loadbalancer.java    # TCP reverse proxy with round-robin
+├── backend/
+│   ├── Dockerfile
+│   └── HttpBackendServer.java   # Simple HTTP server
+├── docker-compose.yml
+└── README.md
+```
+
+## How It Works
+
+### Load balancer (`loadbalancer.java`)
+
+- Listens on port **8888**.
+- Maintains a list of backend addresses: `backend1:9001`, `backend2:9002`, `backend3:9003`.
+- For each accepted client connection:
+  1. Selects the next backend using a synchronized round-robin counter.
+  2. Opens a TCP connection to that backend.
+  3. Spawns two threads to forward data: client → backend and backend → client.
+- Uses a cached thread pool for handling connections concurrently.
+
+### Backend (`HttpBackendServer.java`)
+
+- Listens on a configurable port (default **9001**; set via `PORT` in Docker).
+- Reads the HTTP request (headers) and responds with a minimal HTML page indicating the server port.
+- One thread per connection.
+
+## Configuration
+
+| Component   | Port (host) | Port (container) | Notes                    |
+|------------|-------------|------------------|--------------------------|
+| Proxy      | 8080        | 8888             | Change in `docker-compose.yml` if needed |
+| Backend 1  | —           | 9001             | Set via `PORT` env       |
+| Backend 2  | —           | 9002             | Set via `PORT` env       |
+| Backend 3  | —           | 9003             | Set via `PORT` env       |
+
+Backend hostnames (`backend1`, `backend2`, `backend3`) are Docker Compose service names and must match the list in `loadbalancer.java` if you add or rename services.
+
+## Requirements
+
+- **Java**: Both components are built and run with **OpenJDK 17** in the provided Dockerfiles.
 
 ## License
-MIT — see LICENSE file.
+
+See repository for license information.
